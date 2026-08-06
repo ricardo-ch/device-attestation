@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kacy/device-attestation/ios"
+	"github.com/ricardo-ch/device-attestation/ios"
 )
 
 // Cmdable is the interface for Redis commands.

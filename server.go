@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kacy/device-attestation/challenge"
-	"github.com/kacy/device-attestation/ios"
+	"github.com/ricardo-ch/device-attestation/challenge"
+	"github.com/ricardo-ch/device-attestation/ios"
 )
 
 // Server provides a batteries-included attestation server that handles

@@ -38,8 +38,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kacy/device-attestation/android"
-	"github.com/kacy/device-attestation/ios"
+	"github.com/ricardo-ch/device-attestation/android"
+	"github.com/ricardo-ch/device-attestation/ios"
 )
 
 // Platform represents the mobile platform.
