@@ -424,6 +424,7 @@ func (v *Verifier) verifyCertificateChain(certs []*x509.Certificate) error {
 		Roots:         v.rootCertPool,
 		Intermediates: intermediates,
 		CurrentTime:   time.Now(),
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	}
 
 	if _, err := certs[0].Verify(opts); err != nil {
