@@ -44,6 +44,9 @@ type IOSConfig struct {
 
 	// TeamID is your Apple Developer Team ID (required).
 	TeamID string
+
+	// Whether or not to use the production environment
+	Production bool
 }
 
 // AndroidConfig holds Android-specific configuration.
@@ -110,6 +113,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		}
 		verifierCfg.IOSBundleIDs = cfg.IOS.BundleIDs
 		verifierCfg.IOSTeamID = cfg.IOS.TeamID
+		verifierCfg.Production = cfg.IOS.Production
 	}
 
 	if cfg.Android != nil {

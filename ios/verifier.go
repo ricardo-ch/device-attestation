@@ -205,7 +205,7 @@ func (v *Verifier) VerifyAttestation(ctx context.Context, req *AttestationReques
 		return nil, fmt.Errorf("%w: certificate chain verification failed: %v", ErrVerificationFailed, err)
 	}
 
-	if err := v.verifyAuthenticatorData(attestObj.AuthData, req.BundleID); err != nil {
+	if err := v.verifyAuthenticatorData(attestObj.AuthData, req.BundleID, req.KeyID); err != nil {
 		return nil, fmt.Errorf("%w: authenticator data verification failed: %v", ErrVerificationFailed, err)
 	}
 
@@ -447,7 +447,26 @@ func (v *Verifier) verifyCertificateChain(certs []*x509.Certificate) error {
 	return nil
 }
 
-func (v *Verifier) verifyAuthenticatorData(authData []byte, bundleID string) error {
+const (
+	aaguidDevelopment = "appattestdevelop"
+	aaguidProduction  = "aapattest\x00\x00\x00\x00\x00\x00\x00"
+)
+
+func (v *Verifier) verifyAAGuid(aaguid []byte) error {
+
+	var reference string
+	if v.production {
+		reference = aaguidProduction
+	} else {
+		reference = aaguidDevelopment
+	}
+	if !bytes.Equal(aaguid, []byte(reference)) {
+		return fmt.Errorf("invalid aaguid")
+	}
+	return nil
+}
+
+func (v *Verifier) verifyAuthenticatorData(authData []byte, bundleID string, attestationKeyID string) error {
 	appID := v.teamID + "." + bundleID
 	expectedRPIDHash := sha256.Sum256([]byte(appID))
 
@@ -461,6 +480,22 @@ func (v *Verifier) verifyAuthenticatorData(authData []byte, bundleID string) err
 		return errors.New("attested credential data flag not set")
 	}
 
+	aaguid := authData[37:53]
+	if err := v.verifyAAGuid(aaguid); err != nil {
+		return nil
+	}
+
+	credentialLength := authData[53:55]
+	credentialLengthInt := binary.BigEndian.Uint16(credentialLength)
+	credentialIDHASH := authData[55 : 55+credentialLengthInt]
+	attKeyID, err := base64.StdEncoding.DecodeString(attestationKeyID)
+	if err != nil {
+		return fmt.Errorf("invalid b64 attestion key id: %w", err)
+	}
+
+	if !bytes.Equal(attKeyID, credentialIDHASH) {
+		fmt.Printf("invalid attestion key")
+	}
 	return nil
 }
 
