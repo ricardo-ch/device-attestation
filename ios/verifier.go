@@ -205,10 +205,6 @@ func (v *Verifier) VerifyAttestation(ctx context.Context, req *AttestationReques
 		return nil, fmt.Errorf("%w: certificate chain verification failed: %v", ErrVerificationFailed, err)
 	}
 
-	if err := v.verifyAuthenticatorData(attestObj.AuthData, req.BundleID, req.KeyID); err != nil {
-		return nil, fmt.Errorf("%w: authenticator data verification failed: %v", ErrVerificationFailed, err)
-	}
-
 	clientDataHash := sha256.Sum256([]byte(req.Challenge))
 	if err := v.verifyNonce(certs[0], attestObj.AuthData, clientDataHash[:]); err != nil {
 		return nil, fmt.Errorf("%w: nonce verification failed: %v", ErrVerificationFailed, err)
@@ -221,6 +217,10 @@ func (v *Verifier) VerifyAttestation(ctx context.Context, req *AttestationReques
 
 	if err := v.verifyKeyID(publicKey, req.KeyID); err != nil {
 		return nil, fmt.Errorf("%w: key ID verification failed: %v", ErrVerificationFailed, err)
+	}
+	err = v.verifyAuthenticatorData(attestObj.AuthData, req.BundleID, req.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: authenticator data verification failed: %v", ErrVerificationFailed, err)
 	}
 
 	// Store the public key if a key store is configured
@@ -299,15 +299,16 @@ func (v *Verifier) VerifyAssertion(ctx context.Context, req *AssertionRequest) (
 
 	// Compute client data hash
 	clientDataHash := sha256.Sum256(req.ClientData)
-
+	fmt.Printf("Client data hash: %s\n", base64.StdEncoding.EncodeToString(clientDataHash[:]))
 	// Compute nonce (authenticatorData || clientDataHash)
 	nonceData := make([]byte, len(assertObj.AuthenticatorData)+len(clientDataHash))
 	copy(nonceData, assertObj.AuthenticatorData)
 	copy(nonceData[len(assertObj.AuthenticatorData):], clientDataHash[:])
 	nonce := sha256.Sum256(nonceData)
+	signatureHash := sha256.Sum256(nonce[:])
 
 	// Verify signature
-	if !ecdsa.VerifyASN1(storedKey.PublicKey, nonce[:], assertObj.Signature) {
+	if !ecdsa.VerifyASN1(storedKey.PublicKey, signatureHash[:], assertObj.Signature) {
 		return nil, fmt.Errorf("%w: signature verification failed", ErrVerificationFailed)
 	}
 
@@ -479,10 +480,15 @@ func (v *Verifier) verifyAuthenticatorData(authData []byte, bundleID string, att
 	if flags&0x40 == 0 {
 		return errors.New("attested credential data flag not set")
 	}
+	counter := binary.BigEndian.Uint32(authData[33:37])
+
+	if counter > 0 {
+		return errors.New("invalid counter - not zero")
+	}
 
 	aaguid := authData[37:53]
 	if err := v.verifyAAGuid(aaguid); err != nil {
-		return nil
+		return err
 	}
 
 	credentialLength := authData[53:55]
@@ -494,8 +500,9 @@ func (v *Verifier) verifyAuthenticatorData(authData []byte, bundleID string, att
 	}
 
 	if !bytes.Equal(attKeyID, credentialIDHASH) {
-		fmt.Printf("invalid attestion key")
+		return fmt.Errorf("invalid attestation key")
 	}
+
 	return nil
 }
 
@@ -508,10 +515,10 @@ func (v *Verifier) verifyAssertionAuthData(authData []byte, bundleID string) err
 		return errors.New("RP ID hash mismatch")
 	}
 
-	flags := authData[32]
-	if flags&0x01 == 0 {
-		return errors.New("user present flag not set")
-	}
+	//flags := authData[32]
+	//if flags&0x01 == 0 {
+	//	return errors.New("user present flag not set")
+	//}
 
 	return nil
 }
