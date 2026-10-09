@@ -161,9 +161,6 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 	}
 
 	production := cfg.Production
-	if !cfg.Production && cfg.TeamID != "" {
-		production = true // Default to production
-	}
 
 	return &Verifier{
 		bundleIDSet:                 bundleIDSet,
@@ -311,6 +308,8 @@ func (v *Verifier) VerifyAssertion(ctx context.Context, req *AssertionRequest) (
 	if !ecdsa.VerifyASN1(storedKey.PublicKey, signatureHash[:], assertObj.Signature) {
 		return nil, fmt.Errorf("%w: signature verification failed", ErrVerificationFailed)
 	}
+
+	// Let's check the extension
 
 	// Update counter
 	newCounter, err := v.keyStore.IncrementCounter(ctx, req.KeyID)
@@ -503,6 +502,30 @@ func (v *Verifier) verifyAuthenticatorData(authData []byte, bundleID string, att
 		return fmt.Errorf("invalid attestation key")
 	}
 
+	// Next we have the cbor public key. Ignored for now as not used
+	upperBound := 55 + credentialLengthInt + 77
+	if len(authData) > int(upperBound) {
+		cborDict := authData[upperBound:]
+		var dict map[string]any
+		err := cbor.Unmarshal(cborDict, &dict)
+		if err != nil {
+			return fmt.Errorf("invalid cbor data: %w", err)
+		}
+
+		if category, ok := dict["apple_validation_category_01"]; ok {
+			catByte := category.([]byte)
+			catValue := binary.LittleEndian.Uint32(catByte)
+
+			if catValue != 3 && catValue != 4 {
+				return fmt.Errorf("invalid apple_validation_category_01")
+			}
+
+		}
+		if version, ok := dict["apple_bundle_version_01"]; ok {
+			versionValue := version.(string)
+			fmt.Printf("apple_bundle_version_01: %s\n", versionValue)
+		}
+	}
 	return nil
 }
 
@@ -519,7 +542,29 @@ func (v *Verifier) verifyAssertionAuthData(authData []byte, bundleID string) err
 	//if flags&0x01 == 0 {
 	//	return errors.New("user present flag not set")
 	//}
+	if len(authData) > 37 {
+		dictByte := authData[37:]
 
+		var dict map[string]any
+		err := cbor.Unmarshal(dictByte, &dict)
+		if err != nil {
+			return fmt.Errorf("invalid cbor data: %w", err)
+		}
+
+		if category, ok := dict["apple_validation_category_01"]; ok {
+			catByte := category.([]byte)
+			catValue := binary.LittleEndian.Uint32(catByte)
+
+			if catValue != 3 && catValue != 4 {
+				return fmt.Errorf("invalid apple_validation_category_01")
+			}
+
+		}
+		if version, ok := dict["apple_bundle_version_01"]; ok {
+			versionValue := version.(string)
+			fmt.Printf("apple_bundle_version_01: %s\n", versionValue)
+		}
+	}
 	return nil
 }
 
