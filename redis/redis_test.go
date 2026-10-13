@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/kacy/device-attestation/ios"
+	"github.com/ricardo-ch/device-attestation/ios"
 )
 
 // mockRedis is a simple in-memory mock of Redis for testing.

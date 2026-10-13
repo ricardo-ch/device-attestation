@@ -161,9 +161,6 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 	}
 
 	production := cfg.Production
-	if !cfg.Production && cfg.TeamID != "" {
-		production = true // Default to production
-	}
 
 	return &Verifier{
 		bundleIDSet:                 bundleIDSet,
@@ -205,10 +202,6 @@ func (v *Verifier) VerifyAttestation(ctx context.Context, req *AttestationReques
 		return nil, fmt.Errorf("%w: certificate chain verification failed: %v", ErrVerificationFailed, err)
 	}
 
-	if err := v.verifyAuthenticatorData(attestObj.AuthData, req.BundleID); err != nil {
-		return nil, fmt.Errorf("%w: authenticator data verification failed: %v", ErrVerificationFailed, err)
-	}
-
 	clientDataHash := sha256.Sum256([]byte(req.Challenge))
 	if err := v.verifyNonce(certs[0], attestObj.AuthData, clientDataHash[:]); err != nil {
 		return nil, fmt.Errorf("%w: nonce verification failed: %v", ErrVerificationFailed, err)
@@ -221,6 +214,10 @@ func (v *Verifier) VerifyAttestation(ctx context.Context, req *AttestationReques
 
 	if err := v.verifyKeyID(publicKey, req.KeyID); err != nil {
 		return nil, fmt.Errorf("%w: key ID verification failed: %v", ErrVerificationFailed, err)
+	}
+	err = v.verifyAuthenticatorData(attestObj.AuthData, req.BundleID, req.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: authenticator data verification failed: %v", ErrVerificationFailed, err)
 	}
 
 	// Store the public key if a key store is configured
@@ -299,17 +296,20 @@ func (v *Verifier) VerifyAssertion(ctx context.Context, req *AssertionRequest) (
 
 	// Compute client data hash
 	clientDataHash := sha256.Sum256(req.ClientData)
-
+	fmt.Printf("Client data hash: %s\n", base64.StdEncoding.EncodeToString(clientDataHash[:]))
 	// Compute nonce (authenticatorData || clientDataHash)
 	nonceData := make([]byte, len(assertObj.AuthenticatorData)+len(clientDataHash))
 	copy(nonceData, assertObj.AuthenticatorData)
 	copy(nonceData[len(assertObj.AuthenticatorData):], clientDataHash[:])
 	nonce := sha256.Sum256(nonceData)
+	signatureHash := sha256.Sum256(nonce[:])
 
 	// Verify signature
-	if !ecdsa.VerifyASN1(storedKey.PublicKey, nonce[:], assertObj.Signature) {
+	if !ecdsa.VerifyASN1(storedKey.PublicKey, signatureHash[:], assertObj.Signature) {
 		return nil, fmt.Errorf("%w: signature verification failed", ErrVerificationFailed)
 	}
+
+	// Let's check the extension
 
 	// Update counter
 	newCounter, err := v.keyStore.IncrementCounter(ctx, req.KeyID)
@@ -424,6 +424,7 @@ func (v *Verifier) verifyCertificateChain(certs []*x509.Certificate) error {
 		Roots:         v.rootCertPool,
 		Intermediates: intermediates,
 		CurrentTime:   time.Now(),
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	}
 
 	if _, err := certs[0].Verify(opts); err != nil {
@@ -446,7 +447,26 @@ func (v *Verifier) verifyCertificateChain(certs []*x509.Certificate) error {
 	return nil
 }
 
-func (v *Verifier) verifyAuthenticatorData(authData []byte, bundleID string) error {
+const (
+	aaguidDevelopment = "appattestdevelop"
+	aaguidProduction  = "aapattest\x00\x00\x00\x00\x00\x00\x00"
+)
+
+func (v *Verifier) verifyAAGuid(aaguid []byte) error {
+
+	var reference string
+	if v.production {
+		reference = aaguidProduction
+	} else {
+		reference = aaguidDevelopment
+	}
+	if !bytes.Equal(aaguid, []byte(reference)) {
+		return fmt.Errorf("invalid aaguid")
+	}
+	return nil
+}
+
+func (v *Verifier) verifyAuthenticatorData(authData []byte, bundleID string, attestationKeyID string) error {
 	appID := v.teamID + "." + bundleID
 	expectedRPIDHash := sha256.Sum256([]byte(appID))
 
@@ -459,7 +479,53 @@ func (v *Verifier) verifyAuthenticatorData(authData []byte, bundleID string) err
 	if flags&0x40 == 0 {
 		return errors.New("attested credential data flag not set")
 	}
+	counter := binary.BigEndian.Uint32(authData[33:37])
 
+	if counter > 0 {
+		return errors.New("invalid counter - not zero")
+	}
+
+	aaguid := authData[37:53]
+	if err := v.verifyAAGuid(aaguid); err != nil {
+		return err
+	}
+
+	credentialLength := authData[53:55]
+	credentialLengthInt := binary.BigEndian.Uint16(credentialLength)
+	credentialIDHASH := authData[55 : 55+credentialLengthInt]
+	attKeyID, err := base64.StdEncoding.DecodeString(attestationKeyID)
+	if err != nil {
+		return fmt.Errorf("invalid b64 attestion key id: %w", err)
+	}
+
+	if !bytes.Equal(attKeyID, credentialIDHASH) {
+		return fmt.Errorf("invalid attestation key")
+	}
+
+	// Next we have the cbor public key. Ignored for now as not used
+	upperBound := 55 + credentialLengthInt + 77
+	if len(authData) > int(upperBound) {
+		cborDict := authData[upperBound:]
+		var dict map[string]any
+		err := cbor.Unmarshal(cborDict, &dict)
+		if err != nil {
+			return fmt.Errorf("invalid cbor data: %w", err)
+		}
+
+		if category, ok := dict["apple_validation_category_01"]; ok {
+			catByte := category.([]byte)
+			catValue := binary.LittleEndian.Uint32(catByte)
+
+			if catValue != 3 && catValue != 4 {
+				return fmt.Errorf("invalid apple_validation_category_01")
+			}
+
+		}
+		if version, ok := dict["apple_bundle_version_01"]; ok {
+			versionValue := version.(string)
+			fmt.Printf("apple_bundle_version_01: %s\n", versionValue)
+		}
+	}
 	return nil
 }
 
@@ -472,11 +538,33 @@ func (v *Verifier) verifyAssertionAuthData(authData []byte, bundleID string) err
 		return errors.New("RP ID hash mismatch")
 	}
 
-	flags := authData[32]
-	if flags&0x01 == 0 {
-		return errors.New("user present flag not set")
-	}
+	//flags := authData[32]
+	//if flags&0x01 == 0 {
+	//	return errors.New("user present flag not set")
+	//}
+	if len(authData) > 37 {
+		dictByte := authData[37:]
 
+		var dict map[string]any
+		err := cbor.Unmarshal(dictByte, &dict)
+		if err != nil {
+			return fmt.Errorf("invalid cbor data: %w", err)
+		}
+
+		if category, ok := dict["apple_validation_category_01"]; ok {
+			catByte := category.([]byte)
+			catValue := binary.LittleEndian.Uint32(catByte)
+
+			if catValue != 3 && catValue != 4 {
+				return fmt.Errorf("invalid apple_validation_category_01")
+			}
+
+		}
+		if version, ok := dict["apple_bundle_version_01"]; ok {
+			versionValue := version.(string)
+			fmt.Printf("apple_bundle_version_01: %s\n", versionValue)
+		}
+	}
 	return nil
 }
 

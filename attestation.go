@@ -38,8 +38,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kacy/device-attestation/android"
-	"github.com/kacy/device-attestation/ios"
+	"github.com/ricardo-ch/device-attestation/android"
+	"github.com/ricardo-ch/device-attestation/ios"
 )
 
 // Platform represents the mobile platform.
@@ -132,6 +132,8 @@ type Config struct {
 	// SkipCertificateVerification skips the certificate chain verification for iOS.
 	// WARNING: Only use this for development/testing. Never in production!
 	SkipCertificateVerification bool
+
+	Production bool
 }
 
 // Verifier verifies device attestations.
@@ -167,6 +169,7 @@ func NewVerifier(cfg Config) (Verifier, error) {
 			ChallengeTimeout:            cfg.ChallengeTimeout,
 			KeyStore:                    cfg.KeyStore,
 			SkipCertificateVerification: cfg.SkipCertificateVerification,
+			Production:                  cfg.Production,
 		})
 		if err != nil {
 			return nil, err

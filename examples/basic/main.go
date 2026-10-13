@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"os"
 
-	attestation "github.com/kacy/device-attestation"
+	attestation "github.com/ricardo-ch/device-attestation"
 )
 
 // ChallengeResponse is returned when requesting a new challenge.
